@@ -1,6 +1,7 @@
 'use strict';
 
 const request = require('supertest');
+const http = require('node:http');
 
 const mockPayments = jest.fn();
 jest.mock('@stellar/stellar-sdk', () => ({
@@ -62,12 +63,13 @@ const logger = require('../src/logger');
  * Mounts the router alone with res.write counted, so a test can tell an
  * incremental stream apart from one buffered body written at the end.
  */
-const countingApp = (writes) => {
+const countingApp = (writes, onWrite = () => {}) => {
   const isolated = express();
   isolated.use((req, res, next) => {
     const write = res.write.bind(res);
     res.write = (chunk, ...rest) => {
       writes.push(Buffer.byteLength(chunk));
+      onWrite(String(chunk));
       return write(chunk, ...rest);
     };
     next();
@@ -224,6 +226,165 @@ describe('GET /transactions/export', () => {
       // One write for the header row plus one per record.
       expect(writes).toHaveLength(4);
       expect(writes.every((size) => size < 512)).toBe(true);
+    });
+
+    test('waits for drain when response.write reports backpressure', async () => {
+      mockPages([[record(1), record(2)]]);
+      const writeOrder = [];
+      let forcedBackpressure = false;
+      const backpressureApp = express();
+      backpressureApp.use((req, res, next) => {
+        const write = res.write.bind(res);
+        res.write = (chunk, ...rest) => {
+          const text = String(chunk);
+          writeOrder.push(text);
+          const accepted = write(chunk, ...rest);
+
+          if (!forcedBackpressure && text.startsWith('id-1')) {
+            forcedBackpressure = true;
+            setTimeout(() => {
+              writeOrder.push('drain');
+              res.emit('drain');
+            }, 10);
+            return false;
+          }
+          return accepted;
+        };
+        next();
+      });
+      backpressureApp.use('/', exportRoutes);
+
+      const res = await request(backpressureApp).get(`/transactions/export?address=${ADDRESS}`);
+      const drainIndex = writeOrder.indexOf('drain');
+      const secondRowIndex = writeOrder.findIndex((chunk) => chunk.startsWith('id-2'));
+
+      expect(res.status).toBe(200);
+      expect(forcedBackpressure).toBe(true);
+      expect(drainIndex).toBeGreaterThan(-1);
+      expect(secondRowIndex).toBeGreaterThan(drainIndex);
+    });
+
+    test('delivers the first chunk before all three Horizon pages are fetched and preserves row order', async () => {
+      const firstRecords = Array.from({ length: 200 }, (_, i) => record(i));
+      const secondRecords = Array.from({ length: 200 }, (_, i) => record(i + 200));
+      const thirdRecords = [record(400)];
+      let pagesFetched = 0;
+      let resolveSecondPage;
+      const secondPagePromise = new Promise((resolve) => {
+        resolveSecondPage = resolve;
+      });
+      const releaseSecondPage = () => resolveSecondPage(
+        makePage(secondRecords, () => Promise.resolve(makePage(thirdRecords))),
+      );
+
+      const makePage = (records, next) => {
+        pagesFetched += 1;
+        return { records, ...(next ? { next: jest.fn(next) } : {}) };
+      };
+      const firstPage = makePage(firstRecords, () => secondPagePromise);
+      mockPayments.mockReturnValue({
+        forAccount: jest.fn().mockReturnThis(),
+        order: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        call: jest.fn().mockResolvedValue(firstPage),
+      });
+
+      const server = http.createServer(express().use('/', exportRoutes));
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const received = [];
+      let resolveFirstChunk;
+      let rejectFirstChunk;
+      let resolveResponseEnd;
+      let rejectResponseEnd;
+      const firstChunk = new Promise((resolve, reject) => {
+        resolveFirstChunk = resolve;
+        rejectFirstChunk = reject;
+      });
+      const responseEnd = new Promise((resolve, reject) => {
+        resolveResponseEnd = resolve;
+        rejectResponseEnd = reject;
+      });
+      const clientRequest = http.get(
+        `http://127.0.0.1:${server.address().port}/transactions/export?address=${ADDRESS}`,
+        (response) => {
+          response.on('data', (chunk) => {
+            received.push(chunk);
+            if (received.length === 1) resolveFirstChunk(chunk.toString());
+          });
+          response.on('end', resolveResponseEnd);
+          response.on('error', rejectResponseEnd);
+        },
+      );
+      clientRequest.on('error', (err) => {
+        rejectFirstChunk(err);
+        rejectResponseEnd(err);
+      });
+
+      try {
+        const firstChunkText = await firstChunk;
+        expect(firstChunkText).toContain(COLUMNS.join(','));
+        expect(pagesFetched).toBe(1);
+        releaseSecondPage();
+        await responseEnd;
+
+        const lines = Buffer.concat(received).toString('utf8').trimEnd().split('\r\n');
+        expect(pagesFetched).toBe(3);
+        expect(lines[0]).toBe(COLUMNS.join(','));
+        expect(lines.slice(1).map((line) => line.split(',')[0])).toEqual(
+          Array.from({ length: 401 }, (_, i) => `id-${i}`),
+        );
+      } finally {
+        releaseSecondPage();
+        clientRequest.destroy();
+        server.closeAllConnections();
+        await new Promise((resolve) => server.close(resolve));
+      }
+    });
+
+    test('keeps at most one 200-row page outstanding while streaming 1,000 rows', async () => {
+      const writes = [];
+      let producedRows = 0;
+      let writtenRows = 0;
+      let peakUnwrittenRows = 0;
+
+      const makePage = (pageIndex) => {
+        const records = Array.from({ length: 200 }, (_, i) =>
+          record(pageIndex * 200 + i),
+        );
+        producedRows += records.length;
+        peakUnwrittenRows = Math.max(peakUnwrittenRows, producedRows - writtenRows);
+
+        return {
+          records,
+          ...(pageIndex < 4
+            ? {
+                next: jest.fn(() => {
+                  expect(writtenRows).toBe(producedRows);
+                  return Promise.resolve(makePage(pageIndex + 1));
+                }),
+              }
+            : {}),
+        };
+      };
+      mockPayments.mockReturnValue({
+        forAccount: jest.fn().mockReturnThis(),
+        order: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        call: jest.fn().mockResolvedValue(makePage(0)),
+      });
+
+      const res = await request(
+        countingApp(writes, (chunk) => {
+          if (chunk.startsWith('id-')) writtenRows += 1;
+        }),
+      ).get(`/transactions/export?address=${ADDRESS}`);
+
+      expect(res.status).toBe(200);
+      expect(producedRows).toBe(1000);
+      expect(writtenRows).toBe(1000);
+      expect(peakUnwrittenRows).toBe(200);
+      expect(writes).toHaveLength(1001);
+      expect(res.text).toContain('id-999');
     });
 
     test('stops writing when the page cap is reached and records the truncation', async () => {
