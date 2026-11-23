@@ -1,5 +1,7 @@
 'use strict';
 
+const { isIP } = require('node:net');
+
 const DEFAULT_FEDERATION_DOMAIN = 'localhost';
 
 const VALID_MEMO_TYPES = ['text', 'id', 'hash'];
@@ -7,6 +9,20 @@ const MEMO_ID_RE = /^\d+$/;
 const MEMO_HASH_RE = /^[0-9a-fA-F]{64}$/;
 
 const RESERVED_NAMES = ['admin', 'root', 'support', 'system', 'stellar', 'api', 'help'];
+
+function maskIp(ip) {
+  if (typeof ip !== 'string' || !ip) return null;
+
+  const version = isIP(ip);
+  if (version === 4) {
+    return `${ip.split('.').slice(0, 3).join('.')}.xxx`;
+  }
+  if (version === 6) {
+    if (ip.endsWith('::')) return `${ip}xxx`;
+    return `${ip.slice(0, ip.lastIndexOf(':') + 1)}xxx`;
+  }
+  return null;
+}
 
 // #613 — an address may carry at most this many federation usernames
 // (one primary plus up to four aliases).
@@ -98,6 +114,7 @@ const shouldFallbackToLocalRegistry = (error) => {
 
 module.exports = {
   normalizeNameTag,
+  maskIp,
   validateMemo,
   RESERVED_NAMES,
   MAX_USERNAMES_PER_ADDRESS,

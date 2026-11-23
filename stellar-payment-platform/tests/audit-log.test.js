@@ -68,6 +68,7 @@ const {
   createAuditLogMiddleware,
   SENSITIVE_KEYS,
 } = require('../src/middleware/auditLog');
+const { maskIp } = require('../src/utils');
 
 describe('Admin Audit Logging System', () => {
   beforeEach(() => {
@@ -75,6 +76,21 @@ describe('Admin Audit Logging System', () => {
     mockAuditLogFindMany.mockClear();
     mockUserUpdateMany.mockReset();
     mockUserFindMany.mockReset();
+  });
+
+  describe('maskIp', () => {
+    it('masks the last IPv4 octet', () => {
+      expect(maskIp('192.168.1.25')).toBe('192.168.1.xxx');
+    });
+
+    it('masks the final IPv6 group', () => {
+      expect(maskIp('2001:db8::1')).toBe('2001:db8::xxx');
+    });
+
+    it('handles null and missing values safely', () => {
+      expect(maskIp(null)).toBeNull();
+      expect(maskIp(undefined)).toBeNull();
+    });
   });
 
   describe('redactSensitiveData', () => {
@@ -344,6 +360,27 @@ describe('Admin Audit Logging System', () => {
         take: 10,
         orderBy: { createdAt: 'desc' },
       });
+    });
+
+    it('masks IP addresses in the response without exposing their raw values', async () => {
+      mockAuditLogFindMany.mockResolvedValueOnce([
+        { id: 'ipv4', ipAddress: '192.168.1.25' },
+        { id: 'ipv6', ipAddress: '2001:db8::1' },
+        { id: 'missing', ipAddress: null },
+      ]);
+
+      const res = await request(app)
+        .get('/api/v1/admin/audit-logs')
+        .set('x-api-key', 'test-admin-key');
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.map(({ ipAddress }) => ipAddress)).toEqual([
+        '192.168.1.xxx',
+        '2001:db8::xxx',
+        null,
+      ]);
+      expect(res.text).not.toContain('192.168.1.25');
+      expect(res.text).not.toContain('2001:db8::1');
     });
 
     it('clamps ?limit=10000 to at most 100 rows (schema cap)', async () => {

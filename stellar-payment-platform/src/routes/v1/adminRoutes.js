@@ -27,7 +27,7 @@ const { getRoutingStats } = require('../../services/statsService');
 const { auditLogMiddleware } = require('../../middleware/auditLog');
 const { idempotencyMiddleware } = require('../../../middleware/idempotency');
 const { ACTIVITY_ACTIONS, recordActivity } = require('../../services/activityService');
-const { PRIMARY_USERNAME_ORDER } = require('../../utils');
+const { PRIMARY_USERNAME_ORDER, maskIp } = require('../../utils');
 
 
 module.exports = (redisClient) => {
@@ -207,7 +207,7 @@ router.get(
       return res.status(200).json({
         success: true,
         count: logs.length,
-        data: logs,
+        data: logs.map((log) => ({ ...log, ipAddress: maskIp(log.ipAddress) })),
       });
     }),
   );

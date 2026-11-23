@@ -651,6 +651,11 @@ Retrieves recent immutable audit trail records for mutating admin actions (`POST
 
 Mutating admin requests are intercepted by `auditLogMiddleware` and recorded asynchronously upon response completion. Sensitive keys (`password`, `secret`, `apiKey`, `token`, `signature`, `privateKey`, `seed`) are deeply redacted before persistence.
 
+IP addresses in audit-log API responses are masked: IPv4 retains its first
+three octets and replaces the last with `xxx`, while IPv6 replaces its final
+group with `xxx`. This is a response-only transformation; stored audit records
+and application logs are unchanged.
+
 ### `GET /metrics`
 
 Prometheus scrape endpoint, served in the Prometheus text format. Exempt from the
