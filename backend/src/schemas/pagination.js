@@ -123,12 +123,13 @@ function parseCursor(query = {}) {
 function buildPaginationMeta({ total, page, limit, nextCursor = null }) {
   const safeLimit = limit > 0 ? limit : DEFAULT_LIMIT;
   const safeTotal = Number.isFinite(total) && total > 0 ? total : 0;
+  const totalPages = safeTotal === 0 ? 0 : Math.ceil(safeTotal / safeLimit);
 
   return {
     total: safeTotal,
     page,
     limit: safeLimit,
-    totalPages: Math.ceil(safeTotal / safeLimit) || 0,
+    totalPages,
     nextCursor: nextCursor ?? null,
   };
 }
