@@ -95,6 +95,30 @@ const writeChunk = async (res, chunk) => {
   }
 };
 
+async function* csvChunks(firstPage, headerRow, stats) {
+  let page = firstPage;
+  yield headerRow;
+
+  for (let pageCount = 0; pageCount < MAX_PAGES; pageCount += 1) {
+    const records = page.records || [];
+    if (records.length === 0) break;
+
+    for (const record of records) {
+      yield toRow(record);
+      stats.rows += 1;
+    }
+
+    const exhausted = records.length < PAGE_SIZE || typeof page.next !== 'function';
+    if (exhausted) break;
+
+    if (pageCount === MAX_PAGES - 1) {
+      stats.truncated = true;
+      break;
+    }
+    page = wrapPageWithBreaker(await page.next());
+  }
+}
+
 /**
  * GET /transactions/export
  *
@@ -165,48 +189,28 @@ router.get(
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Cache-Control', 'no-store');
 
-    let rows = 0;
+    const stats = { rows: 0, truncated: false };
 
     try {
-      await writeChunk(res, headerRow);
-
-      let truncated = false;
-      let pageCount = 0;
-
-      for (; pageCount < MAX_PAGES; pageCount += 1) {
-        const records = page.records || [];
-        if (records.length === 0) break;
-
-        for (const record of records) {
-          if (res.writableEnded || req.destroyed) return;
-          await writeChunk(res, toRow(record));
-          rows += 1;
-        }
-
-        const exhausted = records.length < PAGE_SIZE || typeof page.next !== 'function';
-        if (exhausted) break;
-
-        if (pageCount === MAX_PAGES - 1) {
-          truncated = true;
-          break;
-        }
-        page = wrapPageWithBreaker(await page.next());
+      for await (const chunk of csvChunks(page, headerRow, stats)) {
+        if (res.writableEnded || req.destroyed) return;
+        await writeChunk(res, chunk);
       }
 
-      if (truncated) {
+      if (stats.truncated) {
         logger.warn(
           `[Correlation ID: ${req.correlationId}] Export for ${address} hit the ` +
-            `${MAX_PAGES}-page cap after ${rows} rows and was truncated`,
+            `${MAX_PAGES}-page cap after ${stats.rows} rows and was truncated`,
         );
       }
 
       logger.info(
-        `[Correlation ID: ${req.correlationId}] Exported ${rows} transactions for ${address}`,
+        `[Correlation ID: ${req.correlationId}] Exported ${stats.rows} transactions for ${address}`,
       );
       return res.end();
     } catch (err) {
       logger.error(
-        `[Correlation ID: ${req.correlationId}] Export failed after ${rows} rows`,
+        `[Correlation ID: ${req.correlationId}] Export failed after ${stats.rows} rows`,
         err,
       );
       return res.destroy(err);
