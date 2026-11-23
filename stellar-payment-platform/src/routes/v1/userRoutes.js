@@ -42,20 +42,12 @@ const {
 } = require("../../services/activityService");
 const {
   registerBodySchema,
-  isReservedUsername,
   lookupQuerySchema,
   usersQuerySchema,
   activityQuerySchema,
 } = require("../../schemas");
 
 const router = express.Router();
-
-const rejectReservedUsername = (req, _res, next) => {
-  if (isReservedUsername(req.body?.username)) {
-    return next(new ApiError("FORBIDDEN", "This username is reserved."));
-  }
-  return next();
-};
 
 const buildUserSearchWhere = (search) => {
   if (!search) return {};
@@ -155,7 +147,6 @@ const registerLocalUser = async ({ username, address }) => {
 router.post(
   "/register",
   requireJson,
-  rejectReservedUsername,
   validateSchema({ body: registerBodySchema }),
   asyncHandler(async (req, res, next) => {
     const safeUsername = xss(req.body.username);

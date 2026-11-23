@@ -354,7 +354,7 @@ describe('POST /register — reserved usernames (issue #8)', () => {
     mockCreate.mockResolvedValue({ username: 'alice123', address: VALID_ADDRESS });
   });
 
-  it.each(['admin', 'root', 'support', 'api', 'Admin'])(
+  it.each(['admin', 'root', 'support', 'api', 'ADMIN', 'Root', 'SuPpOrT', 'aPi'])(
     'returns 403 FORBIDDEN for reserved username %s on the versioned route',
     async (username) => {
       const res = await request(app)
@@ -367,11 +367,13 @@ describe('POST /register — reserved usernames (issue #8)', () => {
         code: 'FORBIDDEN',
         message: 'This username is reserved.',
       });
+      expect(mockCount).not.toHaveBeenCalled();
+      expect(mockFindFirst).not.toHaveBeenCalled();
       expect(mockCreate).not.toHaveBeenCalled();
     },
   );
 
-  it.each(['admin', 'root', 'support', 'api', 'Admin'])(
+  it.each(['admin', 'root', 'support', 'api', 'ADMIN', 'Root', 'SuPpOrT', 'aPi'])(
     'returns 403 FORBIDDEN for reserved username %s on the root route',
     async (username) => {
       const res = await request(app)
@@ -384,9 +386,23 @@ describe('POST /register — reserved usernames (issue #8)', () => {
         code: 'FORBIDDEN',
         message: 'This username is reserved.',
       });
+      expect(mockCount).not.toHaveBeenCalled();
+      expect(mockFindFirst).not.toHaveBeenCalled();
       expect(mockCreate).not.toHaveBeenCalled();
     },
   );
+
+  it('registers a non-reserved username successfully', async () => {
+    const res = await request(app)
+      .post('/api/v1/register')
+      .set('Content-Type', 'application/json')
+      .send(makeRegisterPayload({ username: 'ordinaryuser' }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.ok).toBe(true);
+    expect(mockCount).toHaveBeenCalled();
+    expect(mockCreate).toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/v1/register — Location header (issue #199)', () => {

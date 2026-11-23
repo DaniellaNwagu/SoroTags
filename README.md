@@ -508,12 +508,13 @@ address is its primary; reverse (`type=id`) federation lookups resolve to it.
   - `address` (string) - The user's Stellar address.
 - **Reserved usernames:** `admin`, `root`, `support`, `system`, `stellar`,
   `api`, `help`, `superuser`, and `administrator` are blocked
-  case-insensitively and return `403 FORBIDDEN`.
+  case-insensitively and return HTTP `403` with error code `FORBIDDEN` and
+  message `This username is reserved.`.
 - **Returns:** A JSON object with registration details `{ ok: true, username, address, is_primary }`.
 - **Status Codes:**
   - `200 OK`: Registration successful.
   - `400 Bad Request`: Missing `username` or `address`.
-  - `403 Forbidden`: Username is reserved.
+  - `403 Forbidden` (`FORBIDDEN`): Username is reserved.
   - `409 Conflict`: Username already taken, or the address already has the maximum of 5 usernames.
   - `500 Internal Server Error`: Database lookup or insertion failed.
 

@@ -3,24 +3,6 @@
 const { z } = require('zod');
 const xss = require('xss');
 
-const RESERVED_USERNAMES = [
-  'admin',
-  'root',
-  'support',
-  'system',
-  'stellar',
-  'api',
-  'help',
-  'superuser',
-  'administrator',
-];
-
-const isReservedUsername = (username) => {
-  if (typeof username !== 'string') return false;
-  const localPart = username.trim().split('*', 1)[0].toLowerCase();
-  return RESERVED_USERNAMES.includes(localPart);
-};
-
 /**
  * Zod transform that strips HTML/JS tags from a string using the `xss`
  * library. Apply this after `.trim()` on every free-text field that could be
@@ -80,47 +62,6 @@ const cursorField = {
 const lookupString = z.string().trim().min(1).max(256);
 
 const optionalLookupString = lookupString.optional();
-
-/**
- * POST /register body.
- *
- * The bare username is validated here; the server appends the federation
- * suffix afterwards. Addresses are only required to be non-empty strings at
- * this layer because the handler runs the authoritative StrKey check and
- * answers 400 with a Stellar-specific message.
- */
-const registerBodySchema = z
-  .object({
-    username: z
-      .string({ error: 'username is required' })
-      .trim()
-      .min(3, 'username must be between 3 and 20 characters')
-      .max(20, 'username must be between 3 and 20 characters')
-      .regex(/^[a-zA-Z0-9]+$/, 'username must contain only letters and numbers')
-      .transform((username) => username.toLowerCase()),
-    // Only required to be a non-empty string: StrKey in the handler is the
-    // authoritative format check and answers 400 with a Stellar-specific
-    // message. Adding a length bound here would reject payloads before they
-    // reach that check, which the injection-safety tests rely on.
-    address: z
-      .string({ error: 'address is required' })
-      .trim()
-      .min(1, 'address cannot be empty'),
-    // Memo and signature fields are only shape-checked here. validateMemo owns
-    // the cross-field pairing and per-type format rules (and their 400
-    // responses), and an empty signature legitimately means "unsigned".
-    // Free-text fields are sanitized against XSS payloads before reaching the
-    // handler layer.
-    memo_type: sanitized(z.string().trim().optional()),
-    memo: sanitized(z.string().trim().optional()),
-    signature: z.string().trim().optional(),
-    signerAddress: z.string().trim().optional(),
-  })
-  .loose()
-  .refine((value) => !isReservedUsername(value.username), {
-    error: 'This username is reserved.',
-    path: ['username'],
-  });
 
 /**
  * GET /federation query.
@@ -371,7 +312,4 @@ module.exports = {
   sanitized,
   ...require('./userSchemas'),
   ...require('./adminSchemas'),
-  RESERVED_USERNAMES,
-  isReservedUsername,
-  registerBodySchema,
 };
