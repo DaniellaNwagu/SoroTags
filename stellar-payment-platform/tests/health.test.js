@@ -6,7 +6,10 @@ jest.mock('@stellar/stellar-sdk', () => ({
 }));
 
 jest.mock('../prismaClient', () => ({
-  prisma: { $queryRaw: jest.fn() },
+  prisma: {
+    $queryRaw: jest.fn(),
+    $metrics: { json: jest.fn() },
+  },
 }));
 
 const { prisma } = require('../prismaClient');
@@ -24,13 +27,23 @@ let redisClient;
 beforeEach(() => {
   jest.clearAllMocks();
   prisma.$queryRaw.mockResolvedValue([{ 1: 1 }]);
+  prisma.$metrics.json.mockResolvedValue({
+    counters: [],
+    histograms: [],
+    gauges: [
+      { key: 'prisma_pool_connections_busy', value: 2 },
+      { key: 'prisma_client_queries_wait', value: 0 },
+    ],
+  });
   redisClient = { ping: jest.fn().mockResolvedValue('PONG') };
   global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200 });
   delete process.env.HEALTH_HORIZON_TIMEOUT_MS;
+  delete process.env.POOL_WARN_THRESHOLD;
 });
 
 afterEach(() => {
   delete process.env.HEALTH_HORIZON_TIMEOUT_MS;
+  delete process.env.POOL_WARN_THRESHOLD;
 });
 
 describe('GET /health', () => {
@@ -43,6 +56,11 @@ describe('GET /health', () => {
       database: 'up',
       redis: 'up',
       horizon: 'up',
+      pool: {
+        status: 'healthy',
+        waitingQueries: 0,
+        busyConnections: 2,
+      },
     });
     expect(res.body.timestamp).toEqual(expect.any(String));
   });
@@ -115,6 +133,75 @@ describe('GET /health', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.redis).toBe('not configured');
+  });
+
+  test('returns 503 when queued queries exceed POOL_WARN_THRESHOLD without changing database status', async () => {
+    process.env.POOL_WARN_THRESHOLD = '0';
+    prisma.$metrics.json.mockResolvedValueOnce({
+      counters: [],
+      histograms: [],
+      gauges: [
+        { key: 'prisma_pool_connections_busy', value: 10 },
+        { key: 'prisma_client_queries_wait', value: 1 },
+      ],
+    });
+
+    const res = await request(buildApp(redisClient)).get('/health');
+
+    expect(res.status).toBe(503);
+    expect(res.body.status).toBe('DOWN');
+    expect(res.body.database).toBe('up');
+    expect(res.body.pool).toEqual({
+      status: 'saturated',
+      waitingQueries: 1,
+      busyConnections: 10,
+    });
+    expect(res.body.message).toContain('Database connection pool saturated');
+  });
+
+  test('uses the configured threshold and treats an equal wait count as healthy', async () => {
+    process.env.POOL_WARN_THRESHOLD = '2';
+    prisma.$metrics.json.mockResolvedValueOnce({
+      counters: [],
+      histograms: [],
+      gauges: [
+        { key: 'prisma_pool_connections_busy', value: 9 },
+        { key: 'prisma_client_queries_wait', value: 2 },
+      ],
+    });
+
+    const atThreshold = await request(buildApp(redisClient)).get('/health');
+
+    expect(atThreshold.status).toBe(200);
+    expect(atThreshold.body.pool.status).toBe('healthy');
+
+    prisma.$metrics.json.mockResolvedValueOnce({
+      counters: [],
+      histograms: [],
+      gauges: [
+        { key: 'prisma_pool_connections_busy', value: 10 },
+        { key: 'prisma_client_queries_wait', value: 3 },
+      ],
+    });
+
+    const aboveThreshold = await request(buildApp(redisClient)).get('/health');
+
+    expect(aboveThreshold.status).toBe(503);
+    expect(aboveThreshold.body.pool.waitingQueries).toBe(3);
+  });
+
+  test('reports unavailable pool metrics as unknown without hiding database availability', async () => {
+    prisma.$metrics.json.mockRejectedValueOnce(new Error('metrics unavailable'));
+
+    const res = await request(buildApp(redisClient)).get('/health');
+
+    expect(res.status).toBe(200);
+    expect(res.body.database).toBe('up');
+    expect(res.body.pool).toEqual({
+      status: 'unknown',
+      waitingQueries: null,
+      busyConnections: null,
+    });
   });
 
   test('aborts the Horizon probe once the timeout elapses', async () => {

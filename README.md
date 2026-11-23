@@ -568,15 +568,19 @@ are removed with the user, so a purge does not leave a trail behind.
 Aggregates the status of every external dependency: PostgreSQL (a `SELECT 1`
 through Prisma), Redis (`PING`) and Stellar Horizon (an HTTP request to
 `HORIZON_BASE`). The three probes run in parallel.
-- **Returns:** `{ status, timestamp, database, redis, horizon }`, where each
-  dependency is `up`, `down`, or `not configured` (Redis, when `REDIS_URL` is
-  unset). A `DOWN` response also carries a `message` naming the failures.
+-   **Returns:** `{ status, timestamp, database, redis, horizon, pool }`, where
+  each dependency is `up`, `down`, or `not configured` (Redis, when `REDIS_URL`
+  is unset). `pool` contains `{ status, waitingQueries, busyConnections }`;
+  status is `healthy`, `saturated`, or `unknown` when pool metrics are
+  unavailable. A `DOWN` response also carries a `message` naming the failures.
 - **Status Codes:**
   - `200 OK`: Every configured dependency responded.
   - `503 Service Unavailable`: At least one dependency is down.
 
 `HEALTH_HORIZON_TIMEOUT_MS` (default 3000) bounds the Horizon probe so a
-hanging Horizon cannot hold the response open.
+hanging Horizon cannot hold the response open. `POOL_WARN_THRESHOLD` (default
+5) controls when queued database queries make `/health` return 503; set it to
+`0` to flag any waiting query.
 
 ### `GET /transactions/export`
 Streams the account's payment history as a CSV download.
