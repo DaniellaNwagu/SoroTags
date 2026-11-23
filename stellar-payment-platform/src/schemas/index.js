@@ -3,6 +3,24 @@
 const { z } = require('zod');
 const xss = require('xss');
 
+const RESERVED_USERNAMES = [
+  'admin',
+  'root',
+  'support',
+  'system',
+  'stellar',
+  'api',
+  'help',
+  'superuser',
+  'administrator',
+];
+
+const isReservedUsername = (username) => {
+  if (typeof username !== 'string') return false;
+  const localPart = username.trim().split('*', 1)[0].toLowerCase();
+  return RESERVED_USERNAMES.includes(localPart);
+};
+
 /**
  * Zod transform that strips HTML/JS tags from a string using the `xss`
  * library. Apply this after `.trim()` on every free-text field that could be
@@ -78,7 +96,8 @@ const registerBodySchema = z
       .trim()
       .min(3, 'username must be between 3 and 20 characters')
       .max(20, 'username must be between 3 and 20 characters')
-      .regex(/^[a-zA-Z0-9]+$/, 'username must contain only letters and numbers'),
+      .regex(/^[a-zA-Z0-9]+$/, 'username must contain only letters and numbers')
+      .transform((username) => username.toLowerCase()),
     // Only required to be a non-empty string: StrKey in the handler is the
     // authoritative format check and answers 400 with a Stellar-specific
     // message. Adding a length bound here would reject payloads before they
@@ -97,7 +116,11 @@ const registerBodySchema = z
     signature: z.string().trim().optional(),
     signerAddress: z.string().trim().optional(),
   })
-  .loose();
+  .loose()
+  .refine((value) => !isReservedUsername(value.username), {
+    error: 'This username is reserved.',
+    path: ['username'],
+  });
 
 /**
  * GET /federation query.
@@ -348,4 +371,7 @@ module.exports = {
   sanitized,
   ...require('./userSchemas'),
   ...require('./adminSchemas'),
+  RESERVED_USERNAMES,
+  isReservedUsername,
+  registerBodySchema,
 };

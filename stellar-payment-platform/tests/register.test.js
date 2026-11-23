@@ -346,6 +346,49 @@ describe('POST /api/v1/register — validation and conflict handling', () => {
   });
 });
 
+describe('POST /register — reserved usernames (issue #8)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockCount.mockResolvedValue(0);
+    mockFindFirst.mockResolvedValue(null);
+    mockCreate.mockResolvedValue({ username: 'alice123', address: VALID_ADDRESS });
+  });
+
+  it.each(['admin', 'root', 'support', 'api', 'Admin'])(
+    'returns 403 FORBIDDEN for reserved username %s on the versioned route',
+    async (username) => {
+      const res = await request(app)
+        .post('/api/v1/register')
+        .set('Content-Type', 'application/json')
+        .send(makeRegisterPayload({ username }));
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'This username is reserved.',
+      });
+      expect(mockCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['admin', 'root', 'support', 'api', 'Admin'])(
+    'returns 403 FORBIDDEN for reserved username %s on the root route',
+    async (username) => {
+      const res = await request(app)
+        .post('/register')
+        .set('Content-Type', 'application/json')
+        .send(makeRegisterPayload({ username }));
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'This username is reserved.',
+      });
+      expect(mockCreate).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe('POST /api/v1/register — Location header (issue #199)', () => {
   const originalDomain = process.env.STELLAR_TAG_DOMAIN;
 

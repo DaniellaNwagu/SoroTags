@@ -23,7 +23,6 @@ const { asyncHandler } = require("../../middleware/asyncHandler");
 const {
   normalizeNameTag,
   validateMemo,
-  RESERVED_NAMES,
   MAX_USERNAMES_PER_ADDRESS,
   PRIMARY_USERNAME_ORDER,
   shouldFallbackToLocalRegistry,
@@ -43,12 +42,20 @@ const {
 } = require("../../services/activityService");
 const {
   registerBodySchema,
+  isReservedUsername,
   lookupQuerySchema,
   usersQuerySchema,
   activityQuerySchema,
 } = require("../../schemas");
 
 const router = express.Router();
+
+const rejectReservedUsername = (req, _res, next) => {
+  if (isReservedUsername(req.body?.username)) {
+    return next(new ApiError("FORBIDDEN", "This username is reserved."));
+  }
+  return next();
+};
 
 const buildUserSearchWhere = (search) => {
   if (!search) return {};
@@ -148,6 +155,7 @@ const registerLocalUser = async ({ username, address }) => {
 router.post(
   "/register",
   requireJson,
+  rejectReservedUsername,
   validateSchema({ body: registerBodySchema }),
   asyncHandler(async (req, res, next) => {
     const safeUsername = xss(req.body.username);
@@ -217,17 +225,6 @@ router.post(
     }
 
     const normalizedUsername = username.toLowerCase();
-
-    // #171 — these guards apply to every registration slot (primary and
-    // aliases), not just the first username for an address.
-    if (RESERVED_NAMES.includes(normalizedUsername)) {
-      return next(
-        new ApiError(
-          "FORBIDDEN",
-          "This username is reserved and cannot be registered.",
-        ),
-      );
-    }
 
     if (BLOCKED_EXCHANGES.includes(address)) {
       return next(
