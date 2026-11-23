@@ -118,6 +118,17 @@ async function getPoolMetrics(prisma) {
   }
 }
 
+/** Returns the pool gauges used by the `/health` endpoint. */
+async function getPoolHealthMetrics(prisma) {
+  const metrics = await getPoolMetrics(prisma);
+  if (!metrics) return null;
+
+  return {
+    db_pool_queries_waiting: metrics.waiters,
+    db_pool_connections_busy: metrics.active,
+  };
+}
+
 /**
  * Runs one pool-health check and logs warnings when usage is high.
  *
@@ -220,6 +231,7 @@ function schedulePoolMonitoring(prisma) {
 module.exports = {
   schedulePoolMonitoring,
   getPoolMetrics,
+  getPoolHealthMetrics,
   checkPool,
   probeMetricsAvailability,
   getDbPoolMonitoringAvailable,
