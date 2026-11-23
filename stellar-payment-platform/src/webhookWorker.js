@@ -375,6 +375,9 @@ const processWebhookJob = async (job, { prisma, poolRunFn }) => {
 const getWebhookQueue = () => {
   if (!webhookQueue) {
     queueConnection = createRedisConnection();
+    if (!queueConnection) {
+      throw new Error('Redis is not configured (REDIS_URL is unset). Cannot create webhook queue.');
+    }
     webhookQueue = new Queue(WEBHOOK_QUEUE_NAME, { connection: queueConnection });
     webhookQueue.on('error', (error) => {
       logger.error(`[webhook-queue] Redis error: ${error.message}`);
@@ -387,6 +390,9 @@ const startWebhookWorker = ({ prisma, poolRunFn }) => {
   if (webhookWorker) return webhookWorker;
 
   workerConnection = createRedisConnection();
+  if (!workerConnection) {
+    throw new Error('Redis is not configured (REDIS_URL is unset). Cannot start webhook worker.');
+  }
   webhookWorker = new Worker(
     WEBHOOK_QUEUE_NAME,
     (job) => processWebhookJob(job, { prisma, poolRunFn }),
