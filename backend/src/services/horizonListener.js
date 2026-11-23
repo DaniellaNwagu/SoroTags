@@ -9,6 +9,8 @@ const NETWORK_PASSPHRASES = {
   futurenet: 'Test SDF Future Network ; October 2022',
 };
 
+const CURSOR_KEY = 'horizon:cursor';
+
 function getExpectedPassphrase(network) {
   const key = String(network || '').toLowerCase();
   return NETWORK_PASSPHRASES[key] || null;
@@ -43,6 +45,30 @@ async function fetchRoot(server) {
   return response;
 }
 
+async function readCursor(redis) {
+  if (!redis || typeof redis.get !== 'function') {
+    return null;
+  }
+  try {
+    const stored = await redis.get(CURSOR_KEY);
+    return stored || null;
+  } catch (err) {
+    logger.error(`Failed to read Horizon cursor from Redis: ${err.message}`);
+    return null;
+  }
+}
+
+async function writeCursor(redis, pagingToken) {
+  if (!redis || typeof redis.set !== 'function' || !pagingToken) {
+    return;
+  }
+  try {
+    await redis.set(CURSOR_KEY, String(pagingToken));
+  } catch (err) {
+    logger.error(`Failed to persist Horizon cursor to Redis: ${err.message}`);
+  }
+}
+
 async function startHorizonListener(config) {
   const server = new Horizon.Server(config.horizonUrl);
 
@@ -50,13 +76,18 @@ async function startHorizonListener(config) {
 
   logger.info(`Horizon listener connected to ${config.horizonUrl} (${config.horizonNetwork})`);
 
+  const storedCursor = await readCursor(config.redis);
+  const startCursor = storedCursor || 'now';
+  logger.info(`Horizon listener starting from cursor ${startCursor}`);
+
   const closeStream = server
     .payments()
-    .cursor('now')
+    .cursor(startCursor)
     .stream({
       onmessage: (payment) => {
         try {
           handlePayment(payment, config);
+          writeCursor(config.redis, payment && payment.paging_token);
         } catch (err) {
           logger.error(`Error handling payment event: ${err.message}`);
         }
@@ -80,5 +111,8 @@ module.exports = {
   startHorizonListener,
   verifyNetwork,
   getExpectedPassphrase,
+  readCursor,
+  writeCursor,
+  CURSOR_KEY,
   NETWORK_PASSPHRASES,
 };
