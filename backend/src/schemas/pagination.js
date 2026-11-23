@@ -51,10 +51,34 @@ const cursorSchema = z.coerce
   .positive();
 
 /**
+ * Optional ISO date schema for time-range filters.
+ *
+ * Accepts an ISO-8601 date or datetime string (e.g. `2026-09-01` or
+ * `2026-09-01T00:00:00Z`) and coerces it to a `Date`. Invalid formats fail
+ * validation so callers can return `400 INVALID_INPUT`.
+ */
+const dateSchema = z
+  .string()
+  .trim()
+  .refine((value) => !Number.isNaN(Date.parse(value)), {
+    message: 'must be a valid ISO date',
+  })
+  .transform((value) => new Date(value));
+
+/**
  * Routing stats query schema: pagination plus an optional `assetCode` filter.
  */
 const routingStatsQuerySchema = paginationSchema.extend({
   assetCode: assetCodeSchema.optional(),
+});
+
+/**
+ * Audit log query schema: pagination plus optional `startDate`/`endDate`
+ * time-range filters.
+ */
+const auditLogQuerySchema = paginationSchema.extend({
+  startDate: dateSchema.optional(),
+  endDate: dateSchema.optional(),
 });
 
 /**
@@ -140,7 +164,9 @@ module.exports = {
   paginationSchema,
   assetCodeSchema,
   cursorSchema,
+  dateSchema,
   routingStatsQuerySchema,
+  auditLogQuerySchema,
   parsePagination,
   parseCursor,
   buildPaginationMeta,
