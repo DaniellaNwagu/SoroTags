@@ -115,6 +115,19 @@ describe('request schemas', () => {
       expect(federationQuerySchema.safeParse({ q: 'alice*localhost', type: 'name' }).success).toBe(true);
     });
 
+    test('accepts a bare username for type=name lookups', () => {
+      expect(federationQuerySchema.safeParse({ q: 'alice', type: 'name' }).success).toBe(true);
+    });
+
+    test('accepts an address query for type=id', () => {
+      expect(
+        federationQuerySchema.safeParse({
+          q: 'GABC123456789012345678901234567890123456789012345678',
+          type: 'id',
+        }).success,
+      ).toBe(true);
+    });
+
     test.each([
       ['missing q', {}],
       ['whitespace-only q', { q: '   ' }],

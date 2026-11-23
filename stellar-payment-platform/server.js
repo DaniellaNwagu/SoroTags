@@ -236,9 +236,16 @@ const getRequestApiKey = (req) => {
 const validateApiKey = async (apiKey) => {
   if (!apiKey) return null;
   try {
-    const { validateApiKey: validate } = require("./src/services/apiKeyService");
-    const record = await validate(apiKey);
-    return record || null;
+    const keyHash = crypto.createHash("sha256").update(apiKey).digest("hex");
+    const record = await prisma.apiKey.findUnique({ where: { keyHash } });
+    if (
+      !record ||
+      record.revokedAt ||
+      (record.expiresAt && record.expiresAt <= new Date())
+    ) {
+      return null;
+    }
+    return record;
   } catch (err) {
     // Any failure to validate (store down, malformed key, etc.) must degrade
     // to the anonymous tier rather than granting the higher limit.
@@ -285,7 +292,7 @@ const limiter = rateLimit({
   keyGenerator: (req /*, res */) => {
     try {
       if (req.apiKeyRecord) {
-        return `auth:${req.apiKeyRecord.id || getRequestApiKey(req)}`;
+        return `auth:${req.apiKeyRecord.keyHash}`;
       }
       return `anon:${req.ip || (req.connection && req.connection.remoteAddress) || ""}`;
     } catch (err) {
@@ -626,9 +633,7 @@ app.get(
         });
 
         if (!cached) {
-          const notFoundError = new Error("Address not found");
-          notFoundError.statusCode = 404;
-          return next(notFoundError);
+          return next(new ApiError("NOT_FOUND", "Address not found"));
         }
 
         return res.json(cached);
@@ -682,9 +687,7 @@ app.get(
         });
 
         if (!cached) {
-          const notFoundError = new Error("Name tag not found");
-          notFoundError.statusCode = 404;
-          return next(notFoundError);
+          return next(new ApiError("NOT_FOUND", "Name tag not found"));
         }
 
         return res.json(cached);
@@ -841,9 +844,7 @@ app.post(
     }
 
     if (!StrKey.isValidEd25519PublicKey(address)) {
-      const error = new Error("Invalid Stellar Public Key format.");
-      error.statusCode = 400;
-      return next(error);
+      return next(new ApiError("INVALID_INPUT", "Invalid Stellar address"));
     }
 
     const memoError = validateMemo(memoType, memo);

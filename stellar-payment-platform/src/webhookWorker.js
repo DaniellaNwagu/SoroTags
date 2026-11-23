@@ -2,7 +2,10 @@ const crypto = require('crypto');
 const { Queue, Worker } = require('bullmq');
 const { createRedisConnection } = require('./config/redis');
 const { logger } = require('./logger');
-const { shouldFallbackToLocalRegistry } = require('./utils');
+const {
+  shouldFallbackToLocalRegistry,
+  exponentialDelay,
+} = require('./utils');
 const {
   updatePaymentIntentStatus,
   VALID_TRANSITIONS,
@@ -214,7 +217,10 @@ const sendWebhook = async (url, payload, secret) => {
   // any connection, so the worker cannot be used as an SSRF proxy.
   const ssrfError = detectSsrfTarget(url);
   if (ssrfError) {
-    throw Object.assign(new Error(ssrfError), { code: 'SSRF_BLOCKED' });
+    throw Object.assign(new Error(ssrfError), {
+      code: 'SSRF_BLOCKED',
+      retryable: false,
+    });
   }
   // ── end SSRF guard ─────────────────────────────────────────────────────────
 
@@ -243,7 +249,12 @@ const sendWebhook = async (url, payload, secret) => {
       signal: controller.signal,
     });
     if (!response.ok) {
-      throw new Error(`Webhook responded with HTTP ${response.status}`);
+      throw Object.assign(
+        new Error(`Webhook responded with HTTP ${response.status}`),
+        {
+          retryable: [429, 500, 502, 503, 504].includes(response.status),
+        },
+      );
     }
     return { ok: true };
   } finally {
@@ -320,13 +331,71 @@ const applyWebhookPaymentIntentStatus = async ({
   return updatePaymentIntentStatus(prisma, paymentIntentId, nextStatus, data);
 };
 
+const recordWebhookEventAttempt = async (prisma, webhook, payload) => {
+  const serializedPayload = JSON.stringify(payload);
+  let event = await prisma.webhookEvent.findFirst({
+    where: {
+      eventType: payload.event,
+      payload: serializedPayload,
+      merchantId: webhook.id,
+    },
+    select: { id: true },
+  });
+
+  if (!event) {
+    event = await prisma.webhookEvent.create({
+      data: {
+        eventType: payload.event,
+        payload: serializedPayload,
+        merchantId: webhook.id,
+      },
+      select: { id: true },
+    });
+  }
+
+  await prisma.webhookEvent.update({
+    where: { id: event.id },
+    data: {
+      attemptCount: { increment: 1 },
+      status: 'pending',
+      lastError: null,
+      deliveredAt: null,
+    },
+  });
+
+  return event.id;
+};
+
+const markWebhookEventDeadLetter = async (prisma, webhook, payload, error) => {
+  const event = await prisma.webhookEvent.findFirst({
+    where: {
+      eventType: payload.event,
+      payload: JSON.stringify(payload),
+      merchantId: webhook.id,
+    },
+    select: { id: true },
+  });
+
+  if (event) {
+    await prisma.webhookEvent.update({
+      where: { id: event.id },
+      data: { status: 'dead_letter', lastError: error.message },
+    });
+  }
+};
+
 const processWebhookJob = async (job, { prisma, poolRunFn }) => {
   const { webhook, payload } = job.data;
   const now = new Date();
+  const webhookEventId = await recordWebhookEventAttempt(prisma, webhook, payload);
 
   try {
     await sendWebhook(webhook.url, payload, webhook.secret);
   } catch (error) {
+    await prisma.webhookEvent.update({
+      where: { id: webhookEventId },
+      data: { lastError: error.message },
+    });
     try {
       await markWebhookFailure(prisma, poolRunFn, webhook.id, now);
     } catch (databaseError) {
@@ -336,6 +405,11 @@ const processWebhookJob = async (job, { prisma, poolRunFn }) => {
     }
     throw error;
   }
+
+  await prisma.webhookEvent.update({
+    where: { id: webhookEventId },
+    data: { status: 'delivered', lastError: null, deliveredAt: now },
+  });
 
   try {
     await markWebhookSuccess(prisma, poolRunFn, webhook.id, now);
@@ -393,19 +467,36 @@ const startWebhookWorker = ({ prisma, poolRunFn }) => {
     {
       connection: workerConnection,
       concurrency: WEBHOOK_WORKER_CONCURRENCY,
+      settings: {
+        backoffStrategy: (attemptsMade, _type, error) =>
+          error?.retryable === false ? -1 : computeRetryDelay(attemptsMade),
+      },
     },
   );
 
   webhookWorker.on('failed', async (job, error) => {
     const maxAttempts = job?.opts?.attempts || MAX_WEBHOOK_ATTEMPTS;
-    const attemptsMade = job?.attemptsMade || 1;
+    const attemptsMade = job?.attemptsMade ?? 1;
 
-    if (attemptsMade >= maxAttempts && job?.data?.webhook) {
+    if (
+      (attemptsMade >= maxAttempts || error?.retryable === false) &&
+      job?.data?.webhook
+    ) {
       logger.error(`[webhook-worker] Delivery failed job=${job?.id || 'unknown'}: ${error.message}; retries exhausted (${attemptsMade}/${maxAttempts})`);
       try {
         await moveToDLQ(prisma, poolRunFn, job.data.webhook);
       } catch (dlqErr) {
         logger.error(`[webhook-worker] Failed to move webhook ${job.data.webhook.id} to DLQ: ${dlqErr.message}`);
+      }
+      try {
+        await markWebhookEventDeadLetter(
+          prisma,
+          job.data.webhook,
+          job.data.payload,
+          error,
+        );
+      } catch (eventErr) {
+        logger.error(`[webhook-worker] Failed to mark event dead letter for job=${job?.id || 'unknown'}: ${eventErr.message}`);
       }
     } else {
       const nextDelayMs = computeRetryDelay(attemptsMade + 1);
