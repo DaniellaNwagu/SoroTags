@@ -59,6 +59,9 @@ async function logMany(events) {
  *   the large `skip` scans that make deep offset pagination slow.
  * - Offset-based (backward compatible): used when no `cursor` is provided.
  *
+ * The `userId` scope is always enforced at the service layer and cannot be
+ * overridden by pagination params (page/limit/cursor).
+ *
  * @param {string} userId
  * @param {Object} [options]
  * @param {number} [options.page=1]
@@ -67,10 +70,15 @@ async function logMany(events) {
  * @returns {Promise<{ data: Object[], total: number, page: number, limit: number, totalPages: number, nextCursor: string|null }>}
  */
 async function listByUser(userId, options = {}) {
+  if (!userId) {
+    throw new Error('listByUser requires a userId to scope activity queries');
+  }
+
   const page = Math.max(1, Number.parseInt(options.page, 10) || 1);
   const limit = Math.max(1, Number.parseInt(options.limit, 10) || 20);
   const cursor = options.cursor || null;
 
+  // Always scope by userId. Pagination params must never widen this filter.
   const where = { userId };
 
   if (cursor) {
