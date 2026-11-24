@@ -19,15 +19,18 @@ router.post('/register', rejectNestedObjects, async (req, res, next) => {
       throw new ApiError('INVALID_INPUT', 'Invalid Stellar address');
     }
 
-    const existing = await prisma.account.findUnique({ where: { address } });
-    if (existing) {
-      // Idempotent re-registration: same username+address pair already exists.
-      return res.status(200).json({ ok: true, already_registered: true });
+    let account;
+    try {
+      account = await prisma.account.create({
+        data: { address, memo: memo || null },
+      });
+    } catch (err) {
+      if (err && err.code === 'P2002') {
+        // Unique constraint violation: another concurrent request won the race.
+        throw new ApiError('CONFLICT', 'Username is already taken.');
+      }
+      throw err;
     }
-
-    const account = await prisma.account.create({
-      data: { address, memo: memo || null },
-    });
 
     res.status(201).json({ ok: true, already_registered: false, address: account.address, memo: account.memo });
   } catch (err) {
