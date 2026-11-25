@@ -11,6 +11,39 @@ const AnalyticsPage = lazy(() => import('./views/AnalyticsPage.jsx'));
 const HistoryPage = lazy(() => import('./views/HistoryPage.jsx'));
 const RegistrationPage = lazy(() => import('./views/RegistrationPage.jsx'));
 
+const KEYBOARD_SHORTCUTS = [
+  { keys: 'Alt+R', description: 'Go to Registration' },
+  { keys: 'Alt+H', description: 'Go to History' },
+  { keys: 'Alt+A', description: 'Go to Analytics' },
+  { keys: '?', description: 'Open this keyboard shortcuts dialog' },
+];
+
+const WALLET_STORAGE_KEY = 'stellar.wallet.publicKey';
+
+function readStoredWalletKey() {
+  try {
+    return localStorage.getItem(WALLET_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function persistWalletKey(publicKey) {
+  try {
+    localStorage.setItem(WALLET_STORAGE_KEY, publicKey);
+  } catch (err) {
+    logger.error('Failed to persist wallet key:', err);
+  }
+}
+
+function clearStoredWalletKey() {
+  try {
+    localStorage.removeItem(WALLET_STORAGE_KEY);
+  } catch (err) {
+    logger.error('Failed to clear stored wallet key:', err);
+  }
+}
+
 /**
  * Generate a unique request identifier.
  * @returns {string}
@@ -558,4 +591,4 @@ const [activeView, setActiveView] = useState('dashboard')
   );
 }
 
-/* … truncated 2006 chars — edit only what you need near the top … */
+export default App;
