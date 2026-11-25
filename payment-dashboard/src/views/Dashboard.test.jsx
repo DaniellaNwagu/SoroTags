@@ -271,7 +271,7 @@ describe('Dashboard – keyboard and screen reader support', () => {
       screen.getByLabelText('Amount'),
       sendButton,
     ]);
-    expect(sendButton.disabled).toBe(false);
+    expect(sendButton.hasAttribute('disabled')).toBe(false);
     expect(sendButton.getAttribute('aria-disabled')).toBe('true');
     expect(
       Array.from(container.querySelectorAll('[tabindex]')).filter(
