@@ -12,6 +12,22 @@ const prisma = new PrismaClient();
  */
 
 /**
+ * Build the pagination meta block shared by all paginated responses.
+ * `totalPages` is always a number, defaulting to 0 when there are no results.
+ * @param {number} total
+ * @param {number} limit
+ * @returns {{ total: number, totalPages: number }}
+ */
+function buildMeta(total, limit) {
+  const safeTotal = Number.isFinite(total) && total > 0 ? total : 0;
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 1;
+  return {
+    total: safeTotal,
+    totalPages: safeTotal === 0 ? 0 : Math.ceil(safeTotal / safeLimit),
+  };
+}
+
+/**
  * Persist a single activity log entry.
  * @param {ActivityEvent} event
  * @returns {Promise<Object>}
@@ -88,13 +104,14 @@ async function listByUser(userId, options = {}) {
     const nextCursor = hasMore ? data[data.length - 1].id : null;
 
     const total = await prisma.activityLog.count({ where });
+    const meta = buildMeta(total, limit);
 
     return {
       data,
-      total,
+      total: meta.total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
+      totalPages: meta.totalPages,
       nextCursor,
     };
   }
@@ -111,13 +128,14 @@ async function listByUser(userId, options = {}) {
   ]);
 
   const nextCursor = data.length === limit ? data[data.length - 1].id : null;
+  const meta = buildMeta(total, limit);
 
   return {
     data,
-    total,
+    total: meta.total,
     page,
     limit,
-    totalPages: Math.ceil(total / limit),
+    totalPages: meta.totalPages,
     nextCursor,
   };
 }
@@ -126,4 +144,5 @@ module.exports = {
   log,
   logMany,
   listByUser,
+  buildMeta,
 };

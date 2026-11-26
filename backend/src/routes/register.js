@@ -9,6 +9,9 @@ const prisma = new PrismaClient();
 
 router.post('/register', rejectNestedObjects, async (req, res, next) => {
   try {
+    // Registration mutates state; never let CDNs/proxies cache the response.
+    res.set('Cache-Control', 'no-store');
+
     const { address, memo } = req.body || {};
 
     if (!address || typeof address !== 'string') {
