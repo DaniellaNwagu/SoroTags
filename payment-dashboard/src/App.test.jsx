@@ -168,3 +168,53 @@ describe('HistoryPage pagination state transitions', () => {
     expect(pagination.getState().loading).toBe(true);
   });
 });
+
+describe('App network badge', () => {
+  const originalNetwork = import.meta.env.VITE_NETWORK;
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    freighterApi.isConnected.mockResolvedValue({ isConnected: false });
+    freighterApi.getPublicKey.mockRejectedValue(new Error('Wallet locked'));
+  });
+
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+    import.meta.env.VITE_NETWORK = originalNetwork;
+  });
+
+  it('renders a green badge for mainnet', async () => {
+    import.meta.env.VITE_NETWORK = 'mainnet';
+
+    render(<App />);
+
+    const badge = await screen.findByTestId('network-badge');
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toMatch(/mainnet/i);
+    expect(badge.className).toMatch(/green/);
+  });
+
+  it('renders a yellow badge for testnet', async () => {
+    import.meta.env.VITE_NETWORK = 'testnet';
+
+    render(<App />);
+
+    const badge = await screen.findByTestId('network-badge');
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toMatch(/testnet/i);
+    expect(badge.className).toMatch(/yellow|amber/);
+  });
+
+  it('defaults to a testnet badge when VITE_NETWORK is unset', async () => {
+    delete import.meta.env.VITE_NETWORK;
+
+    render(<App />);
+
+    const badge = await screen.findByTestId('network-badge');
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toMatch(/testnet/i);
+    expect(badge.className).toMatch(/yellow|amber/);
+  });
+});
