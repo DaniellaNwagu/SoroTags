@@ -32,12 +32,17 @@ describe('request schemas', () => {
       expect(registerBodySchema.safeParse({ ...valid, username: 'a'.repeat(length) }).success).toBe(true);
     });
 
+    test('accepts a hyphenated username', () => {
+      expect(registerBodySchema.safeParse({ ...valid, username: 'alice-bob' }).success).toBe(true);
+    });
+
     test.each([
       ['missing username', { username: undefined }, 'username: username is required'],
       ['2 character username', { username: 'ab' }, 'username: username must be between 3 and 20 characters'],
       ['21 character username', { username: 'a'.repeat(21) }, 'username: username must be between 3 and 20 characters'],
-      ['punctuation', { username: 'alice!@#' }, 'username: username must contain only letters and numbers'],
-      ['a federation tag', { username: 'ab*domain.com' }, 'username: username must contain only letters and numbers'],
+      ['punctuation', { username: 'alice!@#' }, 'username: username must contain only letters, numbers, and hyphens'],
+      ['a federation tag', { username: 'ab*domain.com' }, 'username: username must contain only letters, numbers, and hyphens'],
+      ['an xss payload', { username: 'alice<script>' }, 'username: username must contain only letters, numbers, and hyphens'],
       ['a non-string username', { username: 42 }, 'username: username is required'],
     ])('rejects %s', (_label, patch, expected) => {
       const messages = messagesFor(registerBodySchema, { ...valid, ...patch });

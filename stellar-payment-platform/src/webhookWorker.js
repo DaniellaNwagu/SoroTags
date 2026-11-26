@@ -3,6 +3,7 @@ const { Queue, Worker } = require('bullmq');
 const { createRedisConnection } = require('./config/redis');
 const { logger } = require('./logger');
 const { shouldFallbackToLocalRegistry } = require('./utils');
+const { decryptSecret } = require('./utils/webhookSecret');
 const {
   updatePaymentIntentStatus,
   VALID_TRANSITIONS,
@@ -403,7 +404,7 @@ const startWebhookWorker = ({ prisma, poolRunFn }) => {
     if (attemptsMade >= maxAttempts && job?.data?.webhook) {
       logger.error(`[webhook-worker] Delivery failed job=${job?.id || 'unknown'}: ${error.message}; retries exhausted (${attemptsMade}/${maxAttempts})`);
       try {
-        await moveToDLQ(prisma, poolRunFn, job.data.webhook);
+        await moveToDLQ(prisma, poolRunFn, job.data.webhook, error);
       } catch (dlqErr) {
         logger.error(`[webhook-worker] Failed to move webhook ${job.data.webhook.id} to DLQ: ${dlqErr.message}`);
       }
@@ -509,7 +510,7 @@ const closeWebhookQueue = async () => {
  * The webhook row itself is left intact so the user can re-register if needed;
  * only the delivery record is preserved for manual replay.
  */
-const moveToDLQ = async (prisma, poolRunFn, webhook) => {
+const moveToDLQ = async (prisma, poolRunFn, webhook, lastError = null) => {
   const payload = {
     event: 'webhook.delivery_failed',
     event_id: `dlq-${webhook.id}-${crypto.randomBytes(8).toString('hex')}`,
@@ -566,9 +567,41 @@ const moveToDLQ = async (prisma, poolRunFn, webhook) => {
   // The webhook stays registered; a new payment will retry fresh.
   await markWebhookSuccess(prisma, poolRunFn, webhook.id, now);
 
-  logger.info(
-    `[webhook-worker] Moved to DLQ: webhookId=${webhook.id} username=${webhook.username} url=${webhook.url}`,
-  );
+  const lastError = lastError && lastError.message ? lastError.message : (lastError ? String(lastError) : null);
+
+  // Emit a structured warning so operators can alert on DLQ transitions
+  // without polling the DLQ API.
+  logger.warn('Webhook moved to DLQ', {
+    webhookId: webhook.id,
+    eventId: payload.event_id,
+    username: webhook.username,
+    url: webhook.url,
+    lastError,
+  });
+
+  // Optionally notify an external operator endpoint when configured. Failures
+  // here must never prevent the DLQ write from succeeding, so they are
+  // swallowed and logged.
+  const notifyUrl = process.env.WEBHOOK_DLQ_NOTIFY_URL;
+  if (notifyUrl && typeof fetch === 'function') {
+    try {
+      await fetch(notifyUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event: 'webhook.dlq',
+          webhookId: webhook.id,
+          eventId: payload.event_id,
+          username: webhook.username,
+          url: webhook.url,
+          lastError,
+          movedAt: now.toISOString(),
+        }),
+      });
+    } catch (notifyErr) {
+      logger.error(`[webhook-worker] Failed to POST DLQ notification: ${notifyErr.message}`);
+    }
+  }
 };
 
 /**
