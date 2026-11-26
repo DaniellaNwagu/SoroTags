@@ -12,6 +12,22 @@ const prisma = new PrismaClient();
  */
 
 /**
+ * Build the pagination meta block shared by all paginated responses.
+ * `totalPages` is always a number, defaulting to 0 when there are no results.
+ * @param {number} total
+ * @param {number} limit
+ * @returns {{ total: number, totalPages: number }}
+ */
+function buildMeta(total, limit) {
+  const safeTotal = Number.isFinite(total) && total > 0 ? total : 0;
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 1;
+  return {
+    total: safeTotal,
+    totalPages: safeTotal === 0 ? 0 : Math.ceil(safeTotal / safeLimit),
+  };
+}
+
+/**
  * Persist a single activity log entry.
  * @param {ActivityEvent} event
  * @returns {Promise<Object>}
@@ -59,6 +75,9 @@ async function logMany(events) {
  *   the large `skip` scans that make deep offset pagination slow.
  * - Offset-based (backward compatible): used when no `cursor` is provided.
  *
+ * The `userId` scope is always enforced at the service layer and cannot be
+ * overridden by pagination params (page/limit/cursor).
+ *
  * @param {string} userId
  * @param {Object} [options]
  * @param {number} [options.page=1]
@@ -67,10 +86,15 @@ async function logMany(events) {
  * @returns {Promise<{ data: Object[], total: number, page: number, limit: number, totalPages: number, nextCursor: string|null }>}
  */
 async function listByUser(userId, options = {}) {
+  if (!userId) {
+    throw new Error('listByUser requires a userId to scope activity queries');
+  }
+
   const page = Math.max(1, Number.parseInt(options.page, 10) || 1);
   const limit = Math.max(1, Number.parseInt(options.limit, 10) || 20);
   const cursor = options.cursor || null;
 
+  // Always scope by userId. Pagination params must never widen this filter.
   const where = { userId };
 
   if (cursor) {
@@ -88,13 +112,14 @@ async function listByUser(userId, options = {}) {
     const nextCursor = hasMore ? data[data.length - 1].id : null;
 
     const total = await prisma.activityLog.count({ where });
+    const meta = buildMeta(total, limit);
 
     return {
       data,
-      total,
+      total: meta.total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
+      totalPages: meta.totalPages,
       nextCursor,
     };
   }
@@ -111,13 +136,14 @@ async function listByUser(userId, options = {}) {
   ]);
 
   const nextCursor = data.length === limit ? data[data.length - 1].id : null;
+  const meta = buildMeta(total, limit);
 
   return {
     data,
-    total,
+    total: meta.total,
     page,
     limit,
-    totalPages: Math.ceil(total / limit),
+    totalPages: meta.totalPages,
     nextCursor,
   };
 }
@@ -126,4 +152,5 @@ module.exports = {
   log,
   logMany,
   listByUser,
+  buildMeta,
 };

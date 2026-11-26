@@ -28,6 +28,13 @@ describe('request schemas', () => {
       expect(registerBodySchema.safeParse(valid).success).toBe(true);
     });
 
+    test.each(['admin', 'root', 'support', 'api', 'Admin'])(
+      'rejects reserved username %s',
+      (username) => {
+        expect(registerBodySchema.safeParse({ ...valid, username }).success).toBe(false);
+      },
+    );
+
     test.each([3, 20])('accepts a %i character username', (length) => {
       expect(registerBodySchema.safeParse({ ...valid, username: 'a'.repeat(length) }).success).toBe(true);
     });
@@ -118,6 +125,19 @@ describe('request schemas', () => {
     test('accepts a well-formed federation address', () => {
       expect(federationQuerySchema.safeParse({ q: 'alice*localhost' }).success).toBe(true);
       expect(federationQuerySchema.safeParse({ q: 'alice*localhost', type: 'name' }).success).toBe(true);
+    });
+
+    test('accepts a bare username for type=name lookups', () => {
+      expect(federationQuerySchema.safeParse({ q: 'alice', type: 'name' }).success).toBe(true);
+    });
+
+    test('accepts an address query for type=id', () => {
+      expect(
+        federationQuerySchema.safeParse({
+          q: 'GABC123456789012345678901234567890123456789012345678',
+          type: 'id',
+        }).success,
+      ).toBe(true);
     });
 
     test.each([
@@ -336,4 +356,3 @@ describe('request schemas', () => {
     });
   });
 });
-
