@@ -76,9 +76,31 @@ function handlePayment(payment, config) {
   }
 }
 
+function handleContractEvent(event, config) {
+  const topic = Array.isArray(event.topic) ? event.topic : [];
+  const eventType = topic.length > 0 ? String(topic[0]) : '';
+
+  if (eventType !== 'refund_claimed') {
+    return;
+  }
+
+  const user = topic.length > 1 ? String(topic[1]) : undefined;
+  const token = topic.length > 2 ? String(topic[2]) : undefined;
+  const amount = event.value;
+
+  logger.info(
+    `Received refund_claimed event ${event.id}: user=${user} token=${token} amount=${amount}`
+  );
+
+  if (typeof config.onRefundClaimed === 'function') {
+    config.onRefundClaimed({ user, token, amount, event });
+  }
+}
+
 module.exports = {
   startHorizonListener,
   verifyNetwork,
   getExpectedPassphrase,
+  handleContractEvent,
   NETWORK_PASSPHRASES,
 };
