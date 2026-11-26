@@ -163,7 +163,7 @@ const corsOptions = {
     return callback(new Error("Not allowed by CORS"));
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Request-ID", "X-Api-Key"],
   credentials: true,
   optionsSuccessStatus: 204,
 };
@@ -513,6 +513,27 @@ const registerLocalUser = async ({ username, address, isPrimary = false }) => {
     throw err;
   }
 };
+
+/**
+ * @openapi
+ * /version:
+ *   get:
+ *     tags:
+ *       - v1
+ *     summary: Report the running deployment version
+ *     responses:
+ *       200:
+ *         description: Deployment metadata
+ */
+app.get("/version", (_req, res) => {
+  const packageJson = require("./package.json");
+  res.json({
+    version: packageJson.version,
+    commitSha: process.env.COMMIT_SHA || "unknown",
+    contractId: process.env.CONTRACT_ID || "unknown",
+    nodeEnv: process.env.NODE_ENV || "development",
+  });
+});
 
 // Expose /metrics endpoint for Prometheus to scrape
 
