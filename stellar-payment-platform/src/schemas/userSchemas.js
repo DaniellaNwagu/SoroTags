@@ -35,6 +35,7 @@ const registerBodySchema = z
       .trim()
       .min(3, 'username must be between 3 and 20 characters')
       .max(20, 'username must be between 3 and 20 characters')
+      .regex(/^[a-zA-Z0-9-]+$/, 'username must contain only letters, numbers, and hyphens'),
       .regex(/^[a-zA-Z0-9]+$/, 'username must contain only letters and numbers')
       .transform((username) => username.toLowerCase()),
     // Only required to be a non-empty string: StrKey in the handler is the

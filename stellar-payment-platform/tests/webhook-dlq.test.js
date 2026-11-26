@@ -43,6 +43,7 @@ const {
 } = webhookWorker;
 
 const { prisma } = require('../prismaClient');
+const { logger } = require('../src/logger');
 
 // Mock global.fetch for sendWebhook calls
 global.fetch = jest.fn();
@@ -134,6 +135,9 @@ describe('moveToDLQ', () => {
     expect(createData.failureReason).toContain('exhausted');
   });
 
+  it('emits a warn log with the webhook and event ids on DLQ transition (#109)', async () => {
+    const webhook = {
+      id: 'wh-1',
   it('moves an event to the DLQ after the fifth failed attempt', async () => {
     const webhook = {
       id: 'wh-exhausted',
@@ -142,6 +146,59 @@ describe('moveToDLQ', () => {
       secret: 'secret-abc',
       failingSince: new Date(),
     };
+
+    await moveToDLQ(prisma, async () => {}, webhook, new Error('boom'));
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Webhook moved to DLQ',
+      expect.objectContaining({
+        webhookId: 'wh-1',
+        eventId: expect.stringContaining('dlq-wh-1-'),
+        lastError: 'boom',
+      }),
+    );
+  });
+
+  it('POSTs a notification when WEBHOOK_DLQ_NOTIFY_URL is configured (#109)', async () => {
+    process.env.WEBHOOK_DLQ_NOTIFY_URL = 'https://ops.example.com/dlq';
+    const webhook = {
+      id: 'wh-2',
+      username: 'bob',
+      url: 'https://example.com/hook2',
+      secret: 'secret-xyz',
+      failingSince: new Date(),
+    };
+
+    try {
+      await moveToDLQ(prisma, async () => {}, webhook, new Error('kaboom'));
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://ops.example.com/dlq',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+        }),
+      );
+      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+      expect(body).toMatchObject({ event: 'webhook.dlq', webhookId: 'wh-2', lastError: 'kaboom' });
+    } finally {
+      delete process.env.WEBHOOK_DLQ_NOTIFY_URL;
+    }
+  });
+
+  it('does not POST a notification when WEBHOOK_DLQ_NOTIFY_URL is unset (#109)', async () => {
+    delete process.env.WEBHOOK_DLQ_NOTIFY_URL;
+    const webhook = {
+      id: 'wh-3',
+      username: 'carol',
+      url: 'https://example.com/hook3',
+      secret: 'secret-1',
+      failingSince: new Date(),
+    };
+
+    global.fetch.mockClear();
+    await moveToDLQ(prisma, async () => {}, webhook);
+    expect(global.fetch).not.toHaveBeenCalled();
     const payload = {
       event: 'payment.received',
       event_id: 'payment-exhausted',
