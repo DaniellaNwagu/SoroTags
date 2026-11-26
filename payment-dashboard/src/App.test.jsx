@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, act } from '@testing-library/react';
 import App from './App';
 
 const STORAGE_KEY = 'stellar_dashboard_wallet_pubkey';
@@ -25,6 +25,7 @@ describe('App wallet persistence', () => {
   afterEach(() => {
     cleanup();
     localStorage.clear();
+    vi.useRealTimers();
   });
 
   it('persists the connected public key to localStorage after a successful connection', async () => {
@@ -69,6 +70,35 @@ describe('App wallet persistence', () => {
     });
 
     expect(await screen.findByRole('button', { name: /connect/i })).toBeTruthy();
+  });
+
+  it('shows a spinner while connecting and an error after the wallet times out', async () => {
+    vi.useFakeTimers();
+    freighterApi.isConnected.mockResolvedValue({ isConnected: true });
+    // Simulate a wallet extension that never responds.
+    freighterApi.requestAccess.mockReturnValue(new Promise(() => {}));
+    freighterApi.getPublicKey.mockReturnValue(new Promise(() => {}));
+
+    render(<App />);
+
+    const connectButton = await screen.findByRole('button', { name: /connect/i });
+    act(() => {
+      connectButton.click();
+    });
+
+    // Spinner is visible during the connection attempt.
+    expect(screen.getByRole('status')).toBeTruthy();
+
+    // Advance past the 10s timeout.
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+    });
+
+    expect(await screen.findByText(/timed out/i)).toBeTruthy();
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    // User can retry without refreshing.
+    expect(screen.getByRole('button', { name: /retry|connect/i })).toBeTruthy();
   });
 });
 
