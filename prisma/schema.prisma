@@ -20,4 +20,12 @@ model WebhookEvent {
   // queries. Indexing `status` keeps those lookups from degrading into full
   // table scans as event volume grows.
   @@index([status])
+model User {
+  id        String   @id @default(cuid())
+  address   String   @unique
+  username  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([address])
 }
